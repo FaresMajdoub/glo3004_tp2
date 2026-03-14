@@ -1,0 +1,114 @@
+===================================================
+TP2 — GLO-3004 : Publisher-Subscriber
+===================================================
+
+----------------------------------------------------
+1. EXÉCUTION
+----------------------------------------------------
+
+Commande standard (correction) :
+    java -Dn=2 -Dp=2 -Ds=3 -Dt=100 -jar tp2.jar
+
+Paramètres :
+    -Dn    Nombre max de messages dans le broker ET de publishers simultanés (N dans la spéc)
+    -Dp    Nombre de publishers par app (NB_P)
+    -Ds    Nombre de subscribers par app (NB_S)
+    -Dt    Durée d'exécution en millisecondes
+
+Les paramètres ont des valeurs par défaut (n=2, p=2, s=3, t=100) si non fournis.
+
+
+----------------------------------------------------
+2. INTERPRÉTATION DE LA TRACE
+----------------------------------------------------
+
+Format de chaque ligne :
+    app.type.id ACTION
+
+    app  : "i" ou "t" (les deux types d'application du système)
+    type : "publisher" ou "subscriber"
+    id   : numéro du thread (1..NB_P ou 1..NB_S)
+
+Actions possibles :
+
+Publisher :
+    SUPPLY       → le publisher est prêt à produire (FSP : supply)
+    CONNECT_PUB  → le publisher se connecte au broker (FSP : connect_pub)
+    PUB          → le message est déposé dans le buffer (FSP : pub -> queue)
+    CLOSE_PUB    → fin du cycle publisher
+
+Subscriber :
+    CONNECT_SUB  → le subscriber se connecte au broker (FSP : connect_sub)
+    SUB          → le message est retiré du buffer (FSP : sub -> dequeue)
+    CLOSE_SUB    → fin du cycle subscriber
+    CONSUME      → le message est consommé (FSP : consume)
+
+Exemple de trace valide :
+    i.publisher.2 SUPPLY
+    i.publisher.2 CONNECT_PUB
+    i.publisher.2 PUB
+    i.publisher.2 CLOSE_PUB
+    i.subscriber.1 CONNECT_SUB
+    i.subscriber.1 SUB
+    i.subscriber.1 CLOSE_SUB
+    i.subscriber.1 CONSUME
+
+
+----------------------------------------------------
+3. IMPLÉMENTATION DES PROCESSUS FSP
+----------------------------------------------------
+
+PUB3 = (supply -> connect_pub -> pub -> PUB3)
+    → PublisherThread.java
+    Boucle infinie : SUPPLY → broker.connectPub() → broker.pub() → CLOSE_PUB
+
+SUB3 = (connect_sub -> sub -> consume -> SUB3)
+    → SubscriberThread.java
+    Boucle infinie : broker.connectSub() → broker.sub() → CLOSE_SUB → CONSUME
+
+BROKER4
+    → Broker.java
+    Buffer borné de taille N. ReentrantLock + Condition notEmpty.
+    count : nb de messages dans le buffer (0 <= count <= N)
+    La gestion du compteur de publishers connectés est déléguée au Controller.
+
+CONTROLLER_SUB_SAME_ORIGIN_PUB
+    → Controller.java — instance UNIQUE partagée entre toutes les apps (i et t).
+
+    Le controller compte globalement tous les connect_pub et connect_sub,
+    toutes apps confondues, conformément à la spécification FSP :
+
+        APPS:CONTROLLER_SUB_SAME_ORIGIN_PUB
+
+    Ce `:` dans FSP signifie que le controller est instancié une fois par app
+    mais ses actions sont fusionnées globalement dans la composition parallèle.
+    En pratique, un seul compteur global `pending` est partagé entre i et t.
+
+    pending++ lors de chaque connect_pub (bloque si pending >= N)
+    pending-- lors de chaque connect_sub correspondant
+
+    La barrière pub -> queue est implémentée : pub() attend que le connect_sub
+    correspondant arrive avant de libérer le slot publisher. Cela garantit
+    qu'un nouveau connect_pub ne peut pas se produire avant que queue soit
+    consommée, comme l'impose la séquence FSP : connect_pub -> pub -> queue.
+
+FORBIDDEN / FORBIDDEN_VALIDATOR
+    → Non implémentés explicitement en Java.
+    La contrainte est garantie structurellement : PublisherThread n'a accès
+    qu'aux méthodes connectPub() et pub() du broker. SubscriberThread n'a
+    accès qu'à connectSub() et sub(). Il est donc impossible qu'un subscriber
+    appelle connect_pub ou qu'un publisher appelle connect_sub.
+
+queue / dequeue
+    → Non implémentés comme actions distinctes (l'énoncé le permet).
+    count++ dans pub() joue le rôle de queue.
+    count-- dans sub() joue le rôle de dequeue.
+    La barrière pub -> queue est toutefois respectée via Controller.onPub()
+    qui bloque jusqu'à ce qu'un connect_sub libère le slot.
+
+SYSTEM11
+    → Main.java
+    Crée un Controller unique partagé entre toutes les apps.
+    Crée deux Brokers indépendants (un par app i et t), chacun référençant
+    le Controller global.
+    Lance tous les threads, attend T ms, puis les interrompt proprement.
