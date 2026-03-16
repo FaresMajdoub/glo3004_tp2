@@ -1,7 +1,7 @@
 /**
  * BrokerTest.java — FICHIER DE TEST UNIQUEMENT, ne pas inclure dans le jar final
  *
- * Tests manuels pour valider Broker.java sans avoir besoin des autres classes.
+ * Tests manuels pour valider Broker.java
  * L'équipier 2 lance ces tests directement pour vérifier son implémentation.
  *
  * Compilation (depuis tp2/) :
@@ -25,9 +25,9 @@ public class BrokerTest {
     // Test 1 : un publisher publie, un subscriber consomme
     // Attendu : CONNECT_PUB → PUB → CONNECT_SUB → SUB (dans cet ordre logique)
     // -------------------------------------------------------------------------
+    /*
     static void testerFluxNormal() throws InterruptedException {
-        IBroker broker = new Broker(2);
-
+        IBroker broker = new Broker(2, new Controller(2));
         // Thread publisher : se connecte et publie un message
         Thread pub = new Thread(() -> {
             try {
@@ -52,15 +52,63 @@ public class BrokerTest {
         pub.start(); pub.join();
         sub.start(); sub.join();
         System.out.println("TEST 1 PASSÉ");
+    }*/
+
+    // Proposition pour le Test 1 : A discuter
+
+    static void testerFluxNormal() throws InterruptedException {
+        IBroker broker = new Broker(2, new Controller(2));
+
+        Thread sub = new Thread(() -> {
+            try {
+                broker.connectSub("test.subscriber.1");
+                broker.sub("test.subscriber.1");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+
+
+        Thread pub = new Thread(() -> {
+            try {
+                broker.connectPub("test.publisher.1");
+                broker.pub("test.publisher.1");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        sub.start();
+        Thread.sleep(50);
+        pub.start();
+
+        pub.join(1000);
+        sub.join(1000);
+
+        if (pub.isAlive() || sub.isAlive()) {
+            System.out.println("TEST 1 ECHEC— BLOCAGE DETECTE");
+            pub.interrupt();
+            sub.interrupt();
+
+        } else {
+            System.out.println("TEST 1 OK !");
+        }
     }
+
+
+
+
+
 
     // -------------------------------------------------------------------------
     // Test 2 : le subscriber doit bloquer si aucun message n'est disponible
     // Attendu : le thread sub attend indéfiniment, on le force à s'arrêter après 200ms
+    // Ce test est good
     // -------------------------------------------------------------------------
     static void testerSubscriberBloqueBufferVide() throws InterruptedException {
-        IBroker broker = new Broker(2);
-
+        final int N = 2;
+        IBroker broker = new Broker(N, new Controller(N));
         Thread sub = new Thread(() -> {
             try {
                 // Doit bloquer car le buffer est vide
@@ -77,6 +125,9 @@ public class BrokerTest {
         sub.join();
     }
 
+
+
+    // PROBLEME AVEC CE TEST
     // -------------------------------------------------------------------------
     // Test 3 : avec N=2, jamais plus de 2 publishers connectés simultanément
     // On lance 4 publishers, chacun connectPub + sleep(50ms) + pub
@@ -84,7 +135,7 @@ public class BrokerTest {
     // -------------------------------------------------------------------------
     static void testerMaxPublishersSimultanes() throws InterruptedException {
         final int N = 2;
-        IBroker broker = new Broker(N);
+        IBroker broker = new Broker(N, new Controller(N));
 
         // Compteurs partagés pour mesurer la concurrence
         int[] connectes = {0};   // publishers actuellement connectés
