@@ -13,17 +13,20 @@ import java.util.concurrent.locks.ReentrantLock;
  * Le Broker gère le buffer de messages (count = i dans FSP).
  * La synchronisation CONTROLLER est déléguée au Controller global.
  *
- * RESPONSABLE : Équipier 2
+ * RESPONSABLE : Équipier 2 - Christopher J. Averty
  */
 public class Broker implements IBroker {
 
     private final int N;
-    private int count = 0;
+    private int           count = 0;
+    private int reservedForSubs = 0;
+
 
     private final Controller controller;
 
     private final ReentrantLock lock     = new ReentrantLock();
     private final Condition     notEmpty = lock.newCondition();
+
 
     public Broker(int n, Controller controller) {
         this.N          = n;
@@ -47,6 +50,8 @@ public class Broker implements IBroker {
     public void pub(String label) throws InterruptedException {
         lock.lock();
         try {
+            if (count >= N) {
+                throw new IllegalStateException("Broker overflow: count >= N");}
             count++;
             notEmpty.signal();
             TraceLogger.log(label, "PUB");
@@ -64,9 +69,10 @@ public class Broker implements IBroker {
     public void connectSub(String label) throws InterruptedException {
         lock.lock();
         try {
-            while (count == 0) {
+            while (count - reservedForSubs <= 0) {
                 notEmpty.await();
             }
+            reservedForSubs++; // Reservation d'un message - évite le risque que count -1
         } finally {
             lock.unlock();
         }
@@ -80,6 +86,10 @@ public class Broker implements IBroker {
     public void sub(String label) throws InterruptedException {
         lock.lock();
         try {
+            if (reservedForSubs <= 0 || count <= 0) {
+                throw new IllegalStateException("Invalid broker state");
+            }
+            reservedForSubs--;
             count--;
             TraceLogger.log(label, "SUB");
         } finally {
